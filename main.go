@@ -1,67 +1,44 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"time"
+    "log"
+    "net/http"
+    "os"
 
-	"github.com/LyAndrei/itmo-devops-sem1-project-template/internal/checker"
-	"github.com/LyAndrei/itmo-devops-sem1-project-template/internal/fetcher"
-	"github.com/LyAndrei/itmo-devops-sem1-project-template/internal/parser"
+    "github.com/gorilla/mux"
+    "github.com/joho/godotenv"
+    "project_sem/handlers"
+    "project_sem/models"
 )
 
 func main() {
-	url := "http://srv.msk01.gigacorp.local/_stats"
-	errorCount := 0
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+    // Загрузка переменных окружения из файла .env
+    if err := godotenv.Load(); err != nil {
+        log.Println("No .env file found, loading environment variables")
+    }
 
-	for range ticker.C {
-		statsStr, err := fetcher.FetchStats(url)
-		if err != nil {
-			errorCount++
-			if errorCount >= 3 {
-				fmt.Println("Unable to fetch server statistic.")
-				os.Stdout.Sync()
-			}
-			continue
-		}
+    // Получение переменных окружения
+    dbHost := os.Getenv("POSTGRES_HOST")
+    dbPort := os.Getenv("POSTGRES_PORT")
+    dbUser := os.Getenv("POSTGRES_USER")
+    dbPassword := os.Getenv("POSTGRES_PASSWORD")
+    dbName := os.Getenv("POSTGRES_DB")
 
-		arr, err := parser.ParseStats(statsStr)
-		if err != nil {
-			errorCount++
-			if errorCount >= 3 {
-				fmt.Println("Unable to fetch server statistic.")
-				os.Stdout.Sync()
-			}
-			continue
-		}
+    // Формирование строки подключения
+    dsn := "postgres://" + dbUser + ":" + dbPassword + "@" + dbHost + ":" + dbPort + "/" + dbName + "?sslmode=disable"
 
-		errorCount = 0
+    // Подключение к базе данных
+    db, err := models.InitDB(dsn)
+    if err != nil {
+        log.Fatalf("Failed to connect to the database: %v", err)
+    }
+    defer db.Close()
 
-		loadAvg := arr[0]
-		totalMem := arr[1]
-		usedMem := arr[2]
-		totalDisk := arr[3]
-		usedDisk := arr[4]
-		totalNet := arr[5]
-		usedNet := arr[6]
+    // Создание роутера и запуск сервера
+    router := mux.NewRouter()
+    router.HandleFunc("/api/v0/prices", handlers.PostPrices(db)).Methods("POST")
+    router.HandleFunc("/api/v0/prices", handlers.GetPrices(db)).Methods("GET")
 
-		if msg := checker.CheckLoad(loadAvg); msg != "" {
-			fmt.Println(msg)
-			os.Stdout.Sync()
-		}
-		if msg := checker.CheckMemory(totalMem, usedMem); msg != "" {
-			fmt.Println(msg)
-			os.Stdout.Sync()
-		}
-		if msg := checker.CheckDisk(totalDisk, usedDisk); msg != "" {
-			fmt.Println(msg)
-			os.Stdout.Sync()
-		}
-		if msg := checker.CheckNetwork(totalNet, usedNet); msg != "" {
-			fmt.Println(msg)
-			os.Stdout.Sync()
-		}
-	}
+    log.Println("Server started on :8080")
+    log.Fatal(http.ListenAndServe(":8080", router))
 }
